@@ -280,15 +280,28 @@ class ComfoSpot:
                 all_objs[addr] = ZONE_UUID_BASE + bytes([last])
         time.sleep(0.8)  # allow the gateway to push the initial snapshot
         self._client = client
+
+        state_addrs = { addr for addr, _pid in client.state }
+
+        zone_addrs = {
+            addr
+            for addr in state_addrs
+            if (addr, PID_SPEED) in client.state
+            and (addr, PID_MODE) in client.state
+        }
+        
         # Real controllable zones expose BOTH speed and mode.
         self.zones = {
-            a: self._zone_name(a)
-            for a in all_objs
-            if (a, PID_SPEED) in client.state and (a, PID_MODE) in client.state
+            addr: self._zone_name(addr)
+            for addr in sorted(zone_addrs)
         }
+        
         # System objects (e.g. CO2 / device count) must be kept subscribed too,
         # otherwise the gateway stops pushing their values and they go stale.
-        self.sys_addrs = [a for a in all_objs if a not in self.zones]
+        self.sys_addrs = sorted(
+            (set(all_objs) | state_addrs) - zone_addrs
+        )
+        
         if not self.zones:
             raise ComfoSpotError("No controllable zones found")
 
