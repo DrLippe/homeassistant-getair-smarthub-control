@@ -192,11 +192,67 @@ class FlakeClient:
                     self.my_addr = int.from_bytes(val, "little")
         return self.my_addr
 
-    def query_uuid(self, uuid_bytes: bytes):
-        self.last_assigned_addr = None
+    def _extract_object_addresses(
+        self,
+        payload: bytes,
+        depth: int = 0,
+    ) -> list[int]:
+        """Extract all object addresses from a UUID query response."""
+        if depth > 6:
+            return []
+    
+        addresses: list[int] = []
+    
+        for pt, pid, _marker, value in parse_payload(payload):
+            if pid == PID_OBJ_ADDR and pt in (1, 2, 3, 4, 5, 6):
+                addresses.append(int.from_bytes(value, "little"))
+                continue
+    
+            if pt == 12 and pid == 0x000D:
+                offset = 0
+    
+                # The bin contains one or more:
+                # <uint16 payload_length><property_payload>
+                while offset + 2 <= len(value):
+                    nested_length = int.from_bytes(
+                        value[offset : offset + 2],
+                        "little",
+                    )
+                    offset += 2
+    
+                    if nested_length <= 0:
+                        break
+    
+                    end = offset + nested_length
+                    if end > len(value):
+                        _LOGGER.warning(
+                            "Invalid nested object length %s at offset %s",
+                            nested_length,
+                            offset,
+                        )
+                        break
+    
+                    addresses.extend(
+                        self._extract_object_addresses(
+                            value[offset:end],
+                            depth + 1,
+                        )
+                    )
+                    offset = end
+    
+        return addresses
+
+    def query_uuid(self, uuid_bytes: bytes) -> list[int]:
+        """Return all object addresses matching the UUID."""
         payload = make_payload([(8, 0x1001, 0x00, uuid_bytes)])
-        self.request(4, 0x0000, payload=payload)
-        return self.last_assigned_addr
+        reply = self.request(4, 0x0000, payload=payload)
+    
+        if not reply or not reply["has_payload"]:
+            return []
+    
+        return sorted(
+            set(self._extract_object_addresses(reply["payload"]))
+        )
 
     def subscribe(self, obj_addr: int):
         return self.request(8, obj_addr, payload=None)
@@ -274,10 +330,16 @@ class ComfoSpot:
         client.hello()
         all_objs: dict[int, bytes] = {}
         for last in ZONE_UUID_LAST_RANGE:
-            addr = client.query_uuid(ZONE_UUID_BASE + bytes([last]))
-            if addr:
+            uuid_bytes = ZONE_UUID_BASE + bytes([last])
+            addresses = client.query_uuid(uuid_bytes)
+
+            for addr in addresses:
+                if not addr or addr in all_objs:
+                    continue
+                    
                 client.subscribe(addr)
-                all_objs[addr] = ZONE_UUID_BASE + bytes([last])
+                all_objs[addr] = uuid_bytes
+                
         time.sleep(0.8)  # allow the gateway to push the initial snapshot
         self._client = client
 
