@@ -23,6 +23,7 @@ from .const import (
     PID_MODE,
     PID_NAME,
     PID_OBJ_ADDR,
+    PID_OBJ_UUID,
     PID_SPEED,
     PID_SYS_AIR_QUALITY,
     PID_SYS_FIRMWARE,
