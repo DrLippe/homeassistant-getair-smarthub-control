@@ -8,12 +8,12 @@ DISCOVERY_PORT = 9987
 CONTROL_PORT = 9986
 DEFAULT_PORT = CONTROL_PORT
 
-# Fan stages
-MIN_STAGE = 1
-MAX_STAGE = 4
+# Continuous fan speed range; 0.0 is reserved for off.
+MIN_STAGE = 0.5
+MAX_STAGE = 4.0
 
 # Zone property IDs (FlakeVentilationZone, abbc9241-...-776d)
-PID_SPEED = 0x2011        # float, fan stage 0..4
+PID_SPEED = 0x2011        # float, fan speed 0.5..4.0; 0.0 means off
 PID_MODE = 0x2020         # uint8, direction in the high nibble
 PID_TARGET_TEMP = 0x2030  # float, target temperature
 PID_NAME = 0x2004         # string, user-given zone name (e.g. "Zone 1")

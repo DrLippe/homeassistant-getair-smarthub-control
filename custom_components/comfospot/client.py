@@ -74,7 +74,6 @@ class FlakeClient:
         self.replies: dict[int, dict] = {}
         self.reply_events: dict[int, threading.Event] = {}
         self.state: dict[tuple[int, int], tuple[int, bytes]] = {}
-        self.last_assigned_addr: int | None = None
         self.lock = threading.Lock()
 
     # -- token counter (matches Connection: 1..MAX wraps to MIN) --
@@ -145,8 +144,6 @@ class FlakeClient:
         if msg["has_payload"]:
             for (oaddr, pt, pid, val) in self._walk(msg["payload"], msg["src"]):
                 self.state[(oaddr, pid)] = (pt, val)
-                if pid == PID_OBJ_ADDR and pt in (1, 2, 3, 4, 5, 6):
-                    self.last_assigned_addr = int.from_bytes(val, "little")
         if has_result:
             self.replies[msg["token"]] = msg
             ev = self.reply_events.get(msg["token"])
@@ -161,18 +158,33 @@ class FlakeClient:
                 pass
 
     def _walk(self, payload, oaddr, depth=0):
-        """Yield (objAddr, ptype, pid, value), recursing into nested bin objects.
-
-        Only property id 0x000d (a bin) wraps a nested object: <u16 subAddr><payload>.
-        """
+        """Yield properties, recursively decoding length-prefixed bins."""
         if depth > 6:
             return
+
         for (pt, pid, _mk, val) in parse_payload(payload):
-            if pt == 12 and pid == 0x000D and len(val) >= 2:
-                sub = int.from_bytes(val[:2], "little")
-                yield from self._walk(val[2:], sub if sub else oaddr, depth + 1)
-            else:
+            if pt != 12 or pid != 0x000D:
                 yield (oaddr, pt, pid, val)
+                continue
+
+            offset = 0
+            while offset + 2 <= len(val):
+                nested_length = int.from_bytes(
+                    val[offset : offset + 2], "little"
+                )
+                offset += 2
+                end = offset + nested_length
+
+                if nested_length <= 0 or end > len(val):
+                    _LOGGER.warning(
+                        "Invalid nested object length %s at offset %s",
+                        nested_length,
+                        offset,
+                    )
+                    break
+
+                yield from self._walk(val[offset:end], oaddr, depth + 1)
+                offset = end
 
     def request(self, code, dst, payload=None, wait=2.0):
         token = self.next_token()
@@ -244,7 +256,7 @@ class FlakeClient:
 
     def query_uuid(self, uuid_bytes: bytes) -> list[int]:
         """Return all object addresses matching the UUID."""
-        payload = make_payload([(8, 0x1001, 0x00, uuid_bytes)])
+        payload = make_payload([(8, PID_OBJ_UUID, 0x00, uuid_bytes)])
         reply = self.request(4, 0x0000, payload=payload)
     
         if not reply or not reply["has_payload"]:
@@ -425,9 +437,13 @@ class ComfoSpot:
                 system["firmware"] = _str_val(st, (addr, PID_SYS_FIRMWARE))
         return {"zones": zones, "system": system}
 
-    def set_stage(self, addr: int, stage: int) -> None:
-        """Set the manual fan stage (0=off..MAX_STAGE), preserving direction."""
-        stage = max(0, min(MAX_STAGE, int(stage)))
+    def set_stage(self, addr: int, stage: float) -> None:
+        """Set fan speed: 0=off, otherwise continuously from 0.5 to 4.0."""
+        stage = float(stage)
+        if stage <= 0:
+            stage = 0.0
+        else:
+            stage = max(MIN_STAGE, min(MAX_STAGE, stage))
         with self._lock:
             self._ensure()
             client = self._client
@@ -466,15 +482,17 @@ class ComfoSpot:
                 self._client = None
 
 
-# Stage <-> percentage helpers (stage 1..MAX_STAGE map across 0..100 %).
-def stage_to_percentage(stage: int) -> int:
-    stage = max(0, min(MAX_STAGE, int(stage)))
+# Continuous device speed <-> Home Assistant percentage helpers.
+def stage_to_percentage(stage: float) -> int:
+    stage = float(stage)
     if stage <= 0:
         return 0
+    stage = max(MIN_STAGE, min(MAX_STAGE, stage))
     return round(stage / MAX_STAGE * 100)
 
 
-def percentage_to_stage(pct: int) -> int:
+def percentage_to_stage(pct: int) -> float:
     if pct <= 0:
-        return 0
-    return max(MIN_STAGE, min(MAX_STAGE, round(pct / 100 * MAX_STAGE)))
+        return 0.0
+    stage = pct / 100 * MAX_STAGE
+    return max(MIN_STAGE, min(MAX_STAGE, stage))

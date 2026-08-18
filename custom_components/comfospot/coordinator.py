@@ -37,7 +37,7 @@ class ComfoSpotCoordinator(DataUpdateCoordinator[dict]):
         except OSError as err:
             raise UpdateFailed(f"Connection error: {err}") from err
 
-    async def async_set_stage(self, addr: int, stage: int) -> None:
+    async def async_set_stage(self, addr: int, stage: float) -> None:
         """Set the fan stage for a zone (executor)."""
         await self.hass.async_add_executor_job(self.api.set_stage, addr, stage)
 

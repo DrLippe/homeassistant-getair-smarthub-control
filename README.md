@@ -34,7 +34,7 @@ show up as native Home Assistant entities, set up entirely through the UI.
 
 ## Features
 
-- 🌀 **Fan control** per zone — on/off and stages 1–4
+- 🌀 **Fan control** per zone — off or continuously adjustable from 0.5–4.0
 - 🎯 **Target temperature** as a `number` entity (15–30 °C)
 - 🌡️ **Temperature** and 💧 **humidity** per zone
 - 🫁 **Air quality index** (Bosch BSEC IAQ, 0–500, lower is better)
@@ -78,7 +78,7 @@ is unauthenticated).
 
 | Entity | Type | Notes |
 | --- | --- | --- |
-| `fan.<zone>` | Fan | On/off + stages 1–4 |
+| `fan.<zone>` | Fan | Off or continuously adjustable from 0.5–4.0 |
 | `number.<zone>_target_temperature` | Number | 15–30 °C |
 | `sensor.<zone>_temperature` | Sensor | Indoor temperature |
 | `sensor.<zone>_humidity` | Sensor | Indoor relative humidity |

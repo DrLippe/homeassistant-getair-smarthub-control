@@ -35,16 +35,16 @@ class ComfoSpotFan(ComfoSpotZoneEntity, FanEntity):
         | FanEntityFeature.TURN_ON
         | FanEntityFeature.TURN_OFF
     )
-    _attr_speed_count = MAX_STAGE
+    _attr_speed_count = 100
 
     def __init__(self, coordinator: ComfoSpotCoordinator, addr: int) -> None:
         super().__init__(coordinator, addr)
         self._attr_unique_id = f"{coordinator.entry.entry_id}_zone{addr}_fan"
 
     @property
-    def _stage(self) -> int:
+    def _stage(self) -> float:
         speed = self._zone.get("speed")
-        return int(round(speed)) if speed is not None else 0
+        return float(speed) if speed is not None else 0.0
 
     @property
     def is_on(self) -> bool | None:
@@ -58,11 +58,11 @@ class ComfoSpotFan(ComfoSpotZoneEntity, FanEntity):
         speed = self._zone.get("speed")
         if speed is None:
             return None
-        return stage_to_percentage(int(round(speed)))
+        return stage_to_percentage(float(speed))
 
     async def async_set_percentage(self, percentage: int) -> None:
-        stage = percentage_to_stage(percentage)
-        await self.coordinator.async_set_stage(self._addr, stage)
+        speed = percentage_to_stage(percentage)
+        await self.coordinator.async_set_stage(self._addr, speed)
         await self.coordinator.async_request_refresh()
 
     async def async_turn_on(
@@ -72,10 +72,10 @@ class ComfoSpotFan(ComfoSpotZoneEntity, FanEntity):
         **kwargs: Any,
     ) -> None:
         if percentage is not None:
-            stage = percentage_to_stage(percentage)
+            speed = percentage_to_stage(percentage)
         else:
-            stage = self._stage or 2
-        await self.coordinator.async_set_stage(self._addr, stage)
+            speed = self._stage or 2.0
+        await self.coordinator.async_set_stage(self._addr, speed)
         await self.coordinator.async_request_refresh()
 
     async def async_turn_off(self, **kwargs: Any) -> None:

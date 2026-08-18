@@ -7,6 +7,7 @@ import pytest
 sys.path.insert(0, "custom_components")
 
 from comfospot.client import (
+    FlakeClient,
     _f32,
     _str_val,
     _u32,
@@ -115,6 +116,22 @@ class TestStrVal:
 
     def test_missing_key(self):
         assert _str_val({}, (6, 0x2101)) is None
+
+
+# ---------------------------------------------------------------------------
+# Multi-zone UUID response decoding
+# ---------------------------------------------------------------------------
+
+class TestObjectAddressExtraction:
+    def test_extracts_all_three_zone_addresses(self):
+        client = FlakeClient("127.0.0.1")
+        payload = bytes.fromhex(
+            "01 00 0c 00 0d 00 1e 00 "
+            "08 00 01 00 05 10 02 00 08 00 "
+            "08 00 01 00 05 10 02 00 0a 00 "
+            "08 00 01 00 05 10 02 00 0c 00"
+        )
+        assert client._extract_object_addresses(payload) == [8, 10, 12]
 
 
 # ---------------------------------------------------------------------------
@@ -246,9 +263,14 @@ class TestStageHelpers:
         from comfospot.const import MAX_STAGE
         assert percentage_to_stage(100) == MAX_STAGE
 
-    def test_roundtrip(self):
-        from comfospot.const import MAX_STAGE
-        for stage in range(0, MAX_STAGE + 1):
-            pct = stage_to_percentage(stage)
-            back = percentage_to_stage(pct)
-            assert back == stage, f"stage {stage} -> {pct}% -> {back}"
+    def test_continuous_speed_1_6(self):
+        assert stage_to_percentage(1.6) == 40
+        assert percentage_to_stage(40) == pytest.approx(1.6)
+
+    @pytest.mark.parametrize(
+        ("speed", "percentage"),
+        [(0.0, 0), (0.5, 12), (1.0, 25), (1.6, 40),
+         (2.0, 50), (3.0, 75), (4.0, 100)],
+    )
+    def test_continuous_speed_to_percentage(self, speed, percentage):
+        assert stage_to_percentage(speed) == percentage
