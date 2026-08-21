@@ -19,9 +19,15 @@
   },
   "entity": {
     "sensor": {
-      "air_quality": { "name": "Air quality index" },
-      "pressure": { "name": "Air pressure" },
-      "run_hours": { "name": "Operating hours" },
+      "air_quality": {
+        "name": "Air quality index"
+      },
+      "pressure": {
+        "name": "Air pressure"
+      },
+      "run_hours": {
+        "name": "Operating hours"
+      },
       "iaq_accuracy": {
         "name": "Air quality sensor status",
         "state": {
@@ -33,15 +39,29 @@
       }
     },
     "number": {
-      "target_temperature": { "name": "Target temperature" }
+      "target_temperature": {
+        "name": "Target temperature"
+      }
     },
     "select": {
       "ventilation_mode": {
         "name": "Ventilation mode",
         "state": {
-          "exhaust":     "Exhaust only",
-          "supply":      "Supply only",
+          "exhaust": "Exhaust only",
+          "supply": "Supply only",
           "alternating": "Alternating"
+        }
+      }
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Configure operating modes",
+        "description": "Choose how long night mode and boost ventilation remain active.",
+        "data": {
+          "night_duration": "Night mode duration (minutes)",
+          "boost_duration": "Boost mode duration (minutes)"
         }
       }
     }

@@ -19,9 +19,15 @@
   },
   "entity": {
     "sensor": {
-      "air_quality": { "name": "Luftqualitätsindex" },
-      "pressure": { "name": "Luftdruck" },
-      "run_hours": { "name": "Betriebsstunden" },
+      "air_quality": {
+        "name": "Luftqualitätsindex"
+      },
+      "pressure": {
+        "name": "Luftdruck"
+      },
+      "run_hours": {
+        "name": "Betriebsstunden"
+      },
       "iaq_accuracy": {
         "name": "Status Luftqualitätssensor",
         "state": {
@@ -33,15 +39,29 @@
       }
     },
     "number": {
-      "target_temperature": { "name": "Zieltemperatur" }
+      "target_temperature": {
+        "name": "Zieltemperatur"
+      }
     },
     "select": {
       "ventilation_mode": {
         "name": "Lüftungsmodus",
         "state": {
-          "exhaust":     "Abluft",
-          "supply":      "Zuluft",
+          "exhaust": "Abluft",
+          "supply": "Zuluft",
           "alternating": "Wechselbetrieb"
+        }
+      }
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Betriebsmodi konfigurieren",
+        "description": "Lege fest, wie lange Nachtmodus und Stoßlüften aktiv bleiben.",
+        "data": {
+          "night_duration": "Dauer Nachtmodus (Minuten)",
+          "boost_duration": "Dauer Stoßlüften (Minuten)"
         }
       }
     }

@@ -9,7 +9,13 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .client import percentage_to_stage, stage_to_percentage
-from .const import DOMAIN, MAX_STAGE
+from .const import (
+    DOMAIN,
+    MODE_PRESET_MASK,
+    PRESET_MODES,
+    PRESET_MODES_INV,
+    PRESET_NIGHT,
+)
 from .coordinator import ComfoSpotCoordinator
 from .entity import ComfoSpotZoneEntity
 
@@ -32,10 +38,12 @@ class ComfoSpotFan(ComfoSpotZoneEntity, FanEntity):
     _attr_name = None  # use the device/zone name
     _attr_supported_features = (
         FanEntityFeature.SET_SPEED
+        | FanEntityFeature.PRESET_MODE
         | FanEntityFeature.TURN_ON
         | FanEntityFeature.TURN_OFF
     )
     _attr_speed_count = 100
+    _attr_preset_modes = list(PRESET_MODES)
 
     def __init__(self, coordinator: ComfoSpotCoordinator, addr: int) -> None:
         super().__init__(coordinator, addr)
@@ -60,9 +68,25 @@ class ComfoSpotFan(ComfoSpotZoneEntity, FanEntity):
             return None
         return stage_to_percentage(float(speed))
 
+    @property
+    def preset_mode(self) -> str | None:
+        """Decode the vendor preset independently of airflow direction."""
+        raw_mode = self._zone.get("mode")
+        if raw_mode is None:
+            return None
+        return PRESET_MODES_INV.get(raw_mode & MODE_PRESET_MASK)
+
     async def async_set_percentage(self, percentage: int) -> None:
-        speed = percentage_to_stage(percentage)
-        await self.coordinator.async_set_stage(self._addr, speed)
+        if percentage <= 0:
+            await self.coordinator.async_set_preset(self._addr, PRESET_NIGHT)
+        else:
+            speed = percentage_to_stage(percentage)
+            await self.coordinator.async_set_stage(self._addr, speed)
+        await self.coordinator.async_request_refresh()
+
+    async def async_set_preset_mode(self, preset_mode: str) -> None:
+        """Apply normal, night, boost, or automatic manufacturer operation."""
+        await self.coordinator.async_set_preset(self._addr, preset_mode)
         await self.coordinator.async_request_refresh()
 
     async def async_turn_on(
@@ -71,13 +95,16 @@ class ComfoSpotFan(ComfoSpotZoneEntity, FanEntity):
         preset_mode: str | None = None,
         **kwargs: Any,
     ) -> None:
+        if preset_mode is not None:
+            await self.async_set_preset_mode(preset_mode)
+            return
         if percentage is not None:
             speed = percentage_to_stage(percentage)
         else:
-            speed = self._stage or 2.0
+            speed = self._stage or self.coordinator.api.last_active_stage(self._addr)
         await self.coordinator.async_set_stage(self._addr, speed)
         await self.coordinator.async_request_refresh()
 
     async def async_turn_off(self, **kwargs: Any) -> None:
-        await self.coordinator.async_set_stage(self._addr, 0)
+        await self.coordinator.async_set_preset(self._addr, PRESET_NIGHT)
         await self.coordinator.async_request_refresh()

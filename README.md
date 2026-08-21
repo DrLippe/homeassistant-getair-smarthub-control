@@ -35,6 +35,8 @@ show up as native Home Assistant entities, set up entirely through the UI.
 ## Features
 
 - 🌀 **Fan control** per zone — off or continuously adjustable from 0.5–4.0
+- 🌙 **Manufacturer presets** — normal, night, boost ventilation, and automatic
+- ⏲️ **Configurable night and boost durations** — 5–1,440 minutes, default 60
 - 🎯 **Target temperature** as a `number` entity (15–30 °C)
 - 🌡️ **Temperature** and 💧 **humidity** per zone
 - 🫁 **Air quality index** (Bosch BSEC IAQ, 0–500, lower is better)
@@ -74,11 +76,15 @@ gateway via UDP broadcast and pre-fills its IP address; otherwise enter the
 gateway's IP manually. No username or password is required (the local protocol
 is unauthenticated).
 
+Use **Settings → Devices & Services → ComfoSpot → Configure** to change the
+night-mode and boost-mode durations separately. Both default to 60 minutes, as
+observed in the manufacturer app.
+
 ## Entities
 
 | Entity | Type | Notes |
 | --- | --- | --- |
-| `fan.<zone>` | Fan | Off or continuously adjustable from 0.5–4.0 |
+| `fan.<zone>` | Fan | Continuous speed 0.5–4.0 and normal/night/boost/automatic presets |
 | `number.<zone>_target_temperature` | Number | 15–30 °C |
 | `sensor.<zone>_temperature` | Sensor | Indoor temperature |
 | `sensor.<zone>_humidity` | Sensor | Indoor relative humidity |
@@ -96,6 +102,11 @@ Home Assistant may warn once about the changed unit of the former CO₂ sensor).
 
 The gateway is added as a hub device, and each ventilation zone appears as a
 sub-device linked to it.
+
+Turning a fan off activates the manufacturer's timed **night mode** and sets
+its speed to zero. Turning it back on restores the last active speed and airflow
+direction. **Boost** activates timed maximum-speed ventilation, and
+**automatic** lets the hub manage the current airflow direction and speed.
 
 ## How it works
 

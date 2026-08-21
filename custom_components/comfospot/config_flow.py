@@ -4,11 +4,20 @@ from __future__ import annotations
 from typing import Any
 
 import voluptuous as vol
-from homeassistant.config_entries import ConfigFlow, ConfigFlowResult
+from homeassistant.config_entries import ConfigEntry, ConfigFlow, ConfigFlowResult, OptionsFlow
 from homeassistant.const import CONF_HOST, CONF_PORT
 
 from .client import ComfoSpot, ComfoSpotError, discover
-from .const import DEFAULT_PORT, DOMAIN
+from .const import (
+    CONF_BOOST_DURATION,
+    CONF_NIGHT_DURATION,
+    DEFAULT_BOOST_DURATION,
+    DEFAULT_NIGHT_DURATION,
+    DEFAULT_PORT,
+    DOMAIN,
+    MAX_PRESET_DURATION,
+    MIN_PRESET_DURATION,
+)
 
 
 
@@ -16,6 +25,11 @@ class ComfoSpotConfigFlow(ConfigFlow, domain=DOMAIN):
     """Handle a config flow for ComfoSpot."""
 
     VERSION = 1
+
+    @staticmethod
+    def async_get_options_flow(config_entry: ConfigEntry) -> OptionsFlow:
+        """Return the options flow for configurable vendor-mode durations."""
+        return ComfoSpotOptionsFlow(config_entry)
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
@@ -58,3 +72,39 @@ class ComfoSpotConfigFlow(ConfigFlow, domain=DOMAIN):
         return self.async_show_form(
             step_id="user", data_schema=schema, errors=errors
         )
+
+
+class ComfoSpotOptionsFlow(OptionsFlow):
+    """Configure the duration of timed night and boost modes."""
+
+    def __init__(self, config_entry: ConfigEntry) -> None:
+        """Store the associated entry without relying on new-only HA APIs."""
+        self._config_entry = config_entry
+
+    async def async_step_init(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Show or save the timed-preset durations in minutes."""
+        if user_input is not None:
+            return self.async_create_entry(title="", data=user_input)
+
+        duration_validator = vol.All(
+            vol.Coerce(int), vol.Range(min=MIN_PRESET_DURATION, max=MAX_PRESET_DURATION)
+        )
+        schema = vol.Schema(
+            {
+                vol.Required(
+                    CONF_NIGHT_DURATION,
+                    default=self._config_entry.options.get(
+                        CONF_NIGHT_DURATION, DEFAULT_NIGHT_DURATION
+                    ),
+                ): duration_validator,
+                vol.Required(
+                    CONF_BOOST_DURATION,
+                    default=self._config_entry.options.get(
+                        CONF_BOOST_DURATION, DEFAULT_BOOST_DURATION
+                    ),
+                ): duration_validator,
+            }
+        )
+        return self.async_show_form(step_id="init", data_schema=schema)

@@ -16,11 +16,15 @@ import time
 
 from .const import (
     CONTROL_PORT,
+    DEFAULT_STAGE,
     DISCOVERY_PORT,
     MAX_STAGE,
     MIN_STAGE,
+    MODE_DIRECTION_MASK,
+    MODE_PRESET_MASK,
     PID_HUMIDITY,
     PID_MODE,
+    PID_MODE_UNTIL,
     PID_NAME,
     PID_OBJ_ADDR,
     PID_OBJ_UUID,
@@ -32,6 +36,11 @@ from .const import (
     PID_SYS_RUN_HOURS,
     PID_TARGET_TEMP,
     PID_TEMPERATURE,
+    PRESET_AUTOMATIC,
+    PRESET_BOOST,
+    PRESET_MODES,
+    PRESET_NIGHT,
+    PRESET_NORMAL,
     ZONE_UUID_BASE,
     ZONE_UUID_LAST_RANGE,
 )
@@ -213,17 +222,17 @@ class FlakeClient:
         """Extract all object addresses from a UUID query response."""
         if depth > 6:
             return []
-    
+
         addresses: list[int] = []
-    
+
         for pt, pid, _marker, value in parse_payload(payload):
             if pid == PID_OBJ_ADDR and pt in (1, 2, 3, 4, 5, 6):
                 addresses.append(int.from_bytes(value, "little"))
                 continue
-    
+
             if pt == 12 and pid == 0x000D:
                 offset = 0
-    
+
                 # The bin contains one or more:
                 # <uint16 payload_length><property_payload>
                 while offset + 2 <= len(value):
@@ -232,10 +241,10 @@ class FlakeClient:
                         "little",
                     )
                     offset += 2
-    
+
                     if nested_length <= 0:
                         break
-    
+
                     end = offset + nested_length
                     if end > len(value):
                         _LOGGER.warning(
@@ -244,7 +253,7 @@ class FlakeClient:
                             offset,
                         )
                         break
-    
+
                     addresses.extend(
                         self._extract_object_addresses(
                             value[offset:end],
@@ -252,17 +261,17 @@ class FlakeClient:
                         )
                     )
                     offset = end
-    
+
         return addresses
 
     def query_uuid(self, uuid_bytes: bytes) -> list[int]:
         """Return all object addresses matching the UUID."""
         payload = make_payload([(8, PID_OBJ_UUID, 0x00, uuid_bytes)])
         reply = self.request(4, 0x0000, payload=payload)
-    
+
         if not reply or not reply["has_payload"]:
             return []
-    
+
         return sorted(
             set(self._extract_object_addresses(reply["payload"]))
         )
@@ -319,6 +328,8 @@ class ComfoSpot:
         self._lock = threading.Lock()
         self.zones: dict[int, str] = {}      # addr -> name
         self.sys_addrs: list[int] = []       # non-zone (system) object addresses
+        self._last_active_stages: dict[int, float] = {}
+        self._last_directions: dict[int, int] = {}
 
     # -- connection management --
     def _zone_name(self, addr: int) -> str:
@@ -349,10 +360,10 @@ class ComfoSpot:
             for addr in addresses:
                 if not addr or addr in all_objs:
                     continue
-                    
+
                 client.subscribe(addr)
                 all_objs[addr] = uuid_bytes
-                
+
         time.sleep(0.8)  # allow the gateway to push the initial snapshot
         self._client = client
 
@@ -364,19 +375,19 @@ class ComfoSpot:
             if (addr, PID_SPEED) in client.state
             and (addr, PID_MODE) in client.state
         }
-        
+
         # Real controllable zones expose BOTH speed and mode.
         self.zones = {
             addr: self._zone_name(addr)
             for addr in sorted(zone_addrs)
         }
-        
+
         # System objects (e.g. CO2 / device count) must be kept subscribed too,
         # otherwise the gateway stops pushing their values and they go stale.
         self.sys_addrs = sorted(
             (set(all_objs) | state_addrs) - zone_addrs
         )
-        
+
         if not self.zones:
             raise ComfoSpotError("No controllable zones found")
 
@@ -410,10 +421,16 @@ class ComfoSpot:
         st = client.state
         zones = {}
         for addr, name in self.zones.items():
+            speed = _f32(st, (addr, PID_SPEED))
+            mode = _u8(st, (addr, PID_MODE))
+            if speed is not None and speed > 0:
+                self._last_active_stages[addr] = speed
+            if mode is not None and (mode & MODE_PRESET_MASK) != PRESET_MODES[PRESET_NIGHT]:
+                self._last_directions[addr] = mode & MODE_DIRECTION_MASK
             zones[addr] = {
                 "name": name,
-                "speed": _f32(st, (addr, PID_SPEED)),
-                "mode": _u8(st, (addr, PID_MODE)),
+                "speed": speed,
+                "mode": mode,
                 "target_temp": _f32(st, (addr, PID_TARGET_TEMP)),
                 "humidity": _f32(st, (addr, PID_HUMIDITY)),
                 "temperature": _f32(st, (addr, PID_TEMPERATURE)),
@@ -438,34 +455,103 @@ class ComfoSpot:
                 system["firmware"] = _str_val(st, (addr, PID_SYS_FIRMWARE))
         return {"zones": zones, "system": system}
 
+    def last_active_stage(self, addr: int) -> float:
+        """Return the zone speed remembered before a timed night-mode stop."""
+        return self._last_active_stages.get(addr, DEFAULT_STAGE)
+
     def set_stage(self, addr: int, stage: float) -> None:
-        """Set fan speed: 0=off, otherwise continuously from 0.5 to 4.0."""
+        """Set a continuous fan speed and return the zone to normal operation."""
         stage = float(stage)
         if stage <= 0:
-            stage = 0.0
-        else:
-            stage = max(MIN_STAGE, min(MAX_STAGE, stage))
+            raise ComfoSpotError("Use night mode to switch a ventilation zone off")
+        stage = max(MIN_STAGE, min(MAX_STAGE, stage))
         with self._lock:
             self._ensure()
             client = self._client
             mv = client.state.get((addr, PID_MODE))
             cur_mode = mv[1][0] if mv else 0
-            # High nibble holds the direction; clear it to force manual mode.
-            manual_mode = cur_mode if (cur_mode & 0xF0) == 0 else 0
-            reply = client.set_properties(addr, [
-                (6, PID_MODE, bytes([manual_mode])),
-                (9, PID_SPEED, struct.pack("<f", float(stage))),
-            ])
+            direction = self._last_directions.get(
+                addr, cur_mode & MODE_DIRECTION_MASK
+            )
+            properties = []
+            if cur_mode & MODE_PRESET_MASK:
+                properties.append((10, PID_MODE_UNTIL, struct.pack("<I", 0)))
+            properties.extend(
+                [
+                    (6, PID_MODE, bytes([direction])),
+                    (9, PID_SPEED, struct.pack("<f", stage)),
+                ]
+            )
+            reply = client.set_properties(addr, properties)
             if reply is None:
                 raise ComfoSpotError("No reply from gateway when setting stage")
+            self._last_active_stages[addr] = stage
+            self._last_directions[addr] = direction
 
-    def set_mode(self, addr: int, mode: int) -> None:
-        """Set the ventilation mode (0=exhaust, 1=supply, 2=alternating)."""
+    def set_preset(
+        self, addr: int, preset: str, duration_minutes: int | None = None
+    ) -> None:
+        """Apply a manufacturer preset using the observed vendor-app payloads."""
+        if preset not in PRESET_MODES:
+            raise ComfoSpotError(f"Unsupported ventilation preset: {preset}")
+        if preset in (PRESET_NIGHT, PRESET_BOOST) and (
+            duration_minutes is None or duration_minutes <= 0
+        ):
+            raise ComfoSpotError("Timed presets require a positive duration")
+
         with self._lock:
             self._ensure()
-            reply = self._client.set_property(addr, 6, PID_MODE, bytes([mode & 0x0F]))
+            client = self._client
+            state = client.state
+            current_mode = _u8(state, (addr, PID_MODE)) or 0
+            current_speed = _f32(state, (addr, PID_SPEED))
+            if current_speed is not None and current_speed > 0:
+                self._last_active_stages[addr] = current_speed
+            if (current_mode & MODE_PRESET_MASK) != PRESET_MODES[PRESET_NIGHT]:
+                self._last_directions[addr] = current_mode & MODE_DIRECTION_MASK
+
+            properties = []
+            if preset in (PRESET_NIGHT, PRESET_BOOST):
+                expires_at = int(time.time()) + duration_minutes * 60
+                properties.append(
+                    (10, PID_MODE_UNTIL, struct.pack("<I", expires_at))
+                )
+            elif current_mode & MODE_PRESET_MASK:
+                properties.append((10, PID_MODE_UNTIL, struct.pack("<I", 0)))
+
+            if preset == PRESET_NORMAL:
+                mode_value = self._last_directions.get(
+                    addr, current_mode & MODE_DIRECTION_MASK
+                )
+            else:
+                mode_value = PRESET_MODES[preset]
+            properties.append((6, PID_MODE, bytes([mode_value])))
+
+            if preset == PRESET_NIGHT:
+                properties.append((9, PID_SPEED, struct.pack("<f", 0.0)))
+            elif preset in (PRESET_NORMAL, PRESET_AUTOMATIC):
+                speed = current_speed if current_speed and current_speed > 0 else (
+                    self._last_active_stages.get(addr, DEFAULT_STAGE)
+                )
+                properties.append((9, PID_SPEED, struct.pack("<f", speed)))
+
+            reply = client.set_properties(addr, properties)
+            if reply is None:
+                raise ComfoSpotError(
+                    f"No reply from gateway when setting {preset} preset"
+                )
+
+    def set_mode(self, addr: int, mode: int) -> None:
+        """Change airflow direction without discarding the manufacturer preset."""
+        with self._lock:
+            self._ensure()
+            current_mode = _u8(self._client.state, (addr, PID_MODE)) or 0
+            direction = mode & MODE_DIRECTION_MASK
+            mode_value = (current_mode & MODE_PRESET_MASK) | direction
+            reply = self._client.set_property(addr, 6, PID_MODE, bytes([mode_value]))
             if reply is None:
                 raise ComfoSpotError("No reply from gateway when setting mode")
+            self._last_directions[addr] = direction
 
     def set_target_temp(self, addr: int, temp: float) -> None:
         with self._lock:
